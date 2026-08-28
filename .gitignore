@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.pyside6-android-deploy/
+.buildozer/
+bin/
+*.apk
+*.aab
+chat_state.json
+api_key.txt
+files/
