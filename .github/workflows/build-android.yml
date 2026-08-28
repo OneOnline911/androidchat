@@ -29,12 +29,13 @@ jobs:
       - name: Install host tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "PySide6==6.10.1" qtpip anthropic packaging
+          python -m pip install "PySide6==6.10.1" anthropic packaging
           sudo apt-get update
           sudo apt-get install -y \
             openjdk-17-jdk \
             unzip \
             zip \
+            wget \
             libdouble-conversion3 \
             libmd4c0 \
             libgl1 \
@@ -43,14 +44,15 @@ jobs:
             libfontconfig1 \
             libdbus-1-3
 
-      - name: Download Android PySide wheels
+      - name: Download public Android PySide wheels
         run: |
           mkdir -p android-wheels
           cd android-wheels
-          qtpip download "PySide6==6.10.1" --android --arch aarch64
+          wget -q --show-progress https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
+          wget -q --show-progress https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
           ls -lah
-          test -n "$(find . -maxdepth 1 -type f -iname 'PySide6-*android*aarch64*.whl' -print -quit)"
-          test -n "$(find . -maxdepth 1 -type f -iname 'shiboken6-*android*aarch64*.whl' -print -quit)"
+          test -f PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
+          test -f shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
 
       - name: Prepare Android SDK and NDK
         run: |
@@ -62,12 +64,10 @@ jobs:
       - name: Build ARM64 debug APK
         shell: bash
         run: |
-          PYSIDE_WHEEL=$(find "$GITHUB_WORKSPACE/android-wheels" -type f -iname 'PySide6-*android*aarch64*.whl' | head -n 1)
-          SHIBOKEN_WHEEL=$(find "$GITHUB_WORKSPACE/android-wheels" -type f -iname 'shiboken6-*android*aarch64*.whl' | head -n 1)
+          PYSIDE_WHEEL="$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
+          SHIBOKEN_WHEEL="$GITHUB_WORKSPACE/android-wheels/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
           echo "PySide wheel: $PYSIDE_WHEEL"
           echo "Shiboken wheel: $SHIBOKEN_WHEEL"
-          test -n "$PYSIDE_WHEEL"
-          test -n "$SHIBOKEN_WHEEL"
           pyside6-android-deploy -f -v --name AndroidChat --wheel-pyside "$PYSIDE_WHEEL" --wheel-shiboken "$SHIBOKEN_WHEEL" --keep-deployment-files
           find . -type f \( -name '*.apk' -o -name '*.aab' \) -print
 
