@@ -76,7 +76,7 @@ jobs:
       - name: Build ARM64 debug APK
         shell: bash
         run: |
-          set -euxo pipefail
+          set -uo pipefail
           pyside6-android-deploy \
             --name="AndroidChat" \
             --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl" \
@@ -85,15 +85,31 @@ jobs:
             --ndk-path="$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c" \
             --keep-deployment-files \
             --force \
-            --verbose
-          find . -type f \( -name '*.apk' -o -name '*.aab' \) -print
+            --verbose 2>&1 | tee android-build.log
+          deploy_rc=${PIPESTATUS[0]}
+          echo "pyside6-android-deploy exit code: $deploy_rc"
+          echo "APK/AAB candidates in workspace and home:"
+          find "$GITHUB_WORKSPACE" "$HOME" -type f \( -name '*.apk' -o -name '*.aab' \) -print 2>/dev/null || true
+          if grep -q '^Exception occurred:' android-build.log; then
+            echo "PySide Android deploy swallowed an internal exception; failing the job explicitly."
+            exit 1
+          fi
+          if [ "$deploy_rc" -ne 0 ]; then
+            exit "$deploy_rc"
+          fi
+          apk="$(find "$GITHUB_WORKSPACE" "$HOME" -type f -name '*.apk' -print -quit 2>/dev/null)"
+          if [ -z "$apk" ]; then
+            echo "No APK was produced."
+            exit 1
+          fi
 
       - name: Collect APK
         if: success()
         run: |
           mkdir -p dist
-          find . -type f -name '*.apk' -exec cp -v {} dist/ \;
-          test -n "$(find dist -type f -name '*.apk' -print -quit)"
+          apk="$(find "$GITHUB_WORKSPACE" "$HOME" -type f -name '*.apk' -print -quit 2>/dev/null)"
+          test -n "$apk"
+          cp -v "$apk" dist/
 
       - name: Upload APK
         if: success()
@@ -110,6 +126,7 @@ jobs:
         with:
           name: AndroidChat-build-diagnostics
           path: |
+            android-build.log
             pysidedeploy.spec
             buildozer.spec
             .buildozer/**
