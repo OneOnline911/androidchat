@@ -50,7 +50,6 @@ jobs:
           cd android-wheels
           wget -q --show-progress https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
           wget -q --show-progress https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
-          ls -lah
           test -f PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
           test -f shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
 
@@ -58,17 +57,34 @@ jobs:
         run: |
           git clone --depth 1 --branch 6.10.1 https://code.qt.io/pyside/pyside-setup.git /tmp/pyside-setup
           python -m pip install -r /tmp/pyside-setup/tools/cross_compile_android/requirements.txt
-          python -m pip install packaging
           python /tmp/pyside-setup/tools/cross_compile_android/main.py --download-only --skip-update --auto-accept-license
+          test -d "$HOME/.pyside6_android_deploy/android-sdk"
+          test -d "$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c"
+
+      - name: Verify deploy CLI and inputs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pyside6-android-deploy --help
+          test -f main.py
+          test -f "$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
+          test -f "$GITHUB_WORKSPACE/android-wheels/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
+          test -d "$HOME/.pyside6_android_deploy/android-sdk"
+          test -d "$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c"
 
       - name: Build ARM64 debug APK
         shell: bash
         run: |
-          PYSIDE_WHEEL="$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
-          SHIBOKEN_WHEEL="$GITHUB_WORKSPACE/android-wheels/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
-          echo "PySide wheel: $PYSIDE_WHEEL"
-          echo "Shiboken wheel: $SHIBOKEN_WHEEL"
-          pyside6-android-deploy -f -v --name AndroidChat --wheel-pyside "$PYSIDE_WHEEL" --wheel-shiboken "$SHIBOKEN_WHEEL" --keep-deployment-files
+          set -euxo pipefail
+          pyside6-android-deploy \
+            --name="AndroidChat" \
+            --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl" \
+            --wheel-shiboken="$GITHUB_WORKSPACE/android-wheels/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl" \
+            --sdk-path="$HOME/.pyside6_android_deploy/android-sdk" \
+            --ndk-path="$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c" \
+            --keep-deployment-files \
+            --force \
+            --verbose
           find . -type f \( -name '*.apk' -o -name '*.aab' \) -print
 
       - name: Collect APK
