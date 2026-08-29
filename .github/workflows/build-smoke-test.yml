@@ -135,7 +135,12 @@ jobs:
           apk="$(find "$GITHUB_WORKSPACE/smoke-test" "$HOME" -type f -name '*.apk' -print -quit 2>/dev/null)"
           test -n "$apk"
           cp -v "$apk" dist-smoke/QtSmokeTest-debug.apk
-          "$HOME/.pyside6_android_deploy/android-sdk/build-tools/35.0.0/aapt" dump badging dist-smoke/QtSmokeTest-debug.apk | tee dist-smoke/apk-badging.txt
+          aapt="$(find "$HOME/.pyside6_android_deploy/android-sdk/build-tools" -type f -name aapt -print 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -n "$aapt" ]; then
+            "$aapt" dump badging dist-smoke/QtSmokeTest-debug.apk | tee dist-smoke/apk-badging.txt
+          else
+            printf '%s\n' 'aapt not found; APK collection succeeded.' > dist-smoke/apk-badging.txt
+          fi
 
       - name: Upload smoke-test APK
         if: success()
