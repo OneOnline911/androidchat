@@ -57,6 +57,7 @@ jobs:
         run: |
           git clone --depth 1 --branch 6.10.1 https://code.qt.io/pyside/pyside-setup.git /tmp/pyside-setup
           python -m pip install -r /tmp/pyside-setup/tools/cross_compile_android/requirements.txt
+          python -m pip install -r /tmp/pyside-setup/sources/pyside-tools/requirements-android.txt
           python /tmp/pyside-setup/tools/cross_compile_android/main.py --download-only --skip-update --auto-accept-license
           test -d "$HOME/.pyside6_android_deploy/android-sdk"
           test -d "$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c"
