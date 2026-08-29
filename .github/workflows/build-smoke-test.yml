@@ -1,4 +1,4 @@
-name: Build Qt Smoke Test APK
+name: Build Modern Qt Smoke Test APK
 
 on:
   workflow_dispatch:
@@ -7,6 +7,14 @@ on:
     paths:
       - "smoke_main.py"
       - ".github/workflows/build-smoke-test.yml"
+
+env:
+  PYSIDE_VERSION: "6.10.1"
+  TARGET_PYTHON_VERSION: "3.11.16"
+  P4A_REF: "v2026.05.09"
+  ANDROID_API: "36"
+  ANDROID_MIN_API: "28"
+  ANDROID_BUILD_TOOLS: "36.0.0"
 
 jobs:
   build:
@@ -34,9 +42,11 @@ jobs:
           EOF
 
       - name: Install host tools
+        shell: bash
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "PySide6==6.10.1" packaging
+          python -m pip install "PySide6==${PYSIDE_VERSION}" packaging
           sudo apt-get update
           sudo apt-get install -y \
             ant \
@@ -61,6 +71,7 @@ jobs:
             unzip \
             zip \
             wget \
+            binutils \
             libdouble-conversion3 \
             libmd4c0 \
             libgl1 \
@@ -70,22 +81,88 @@ jobs:
             libdbus-1-3
 
       - name: Download public Android PySide wheels
+        shell: bash
         run: |
+          set -euxo pipefail
           mkdir -p android-wheels
           cd android-wheels
-          wget -q --show-progress https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
-          wget -q --show-progress https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
-          test -f PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
-          test -f shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
+          wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          test -f "PySide6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          test -f "shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
 
       - name: Prepare Android SDK and NDK
+        shell: bash
         run: |
-          git clone --depth 1 --branch 6.10.1 https://code.qt.io/pyside/pyside-setup.git /tmp/pyside-setup
+          set -euxo pipefail
+          git clone --depth 1 --branch "${PYSIDE_VERSION}" https://code.qt.io/pyside/pyside-setup.git /tmp/pyside-setup
           python -m pip install -r /tmp/pyside-setup/tools/cross_compile_android/requirements.txt
           python -m pip install -r /tmp/pyside-setup/sources/pyside-tools/requirements-android.txt
           python /tmp/pyside-setup/tools/cross_compile_android/main.py --download-only --skip-update --auto-accept-license
           test -d "$HOME/.pyside6_android_deploy/android-sdk"
           test -d "$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c"
+
+          sdkmanager="$(find "$HOME/.pyside6_android_deploy/android-sdk" -type f -name sdkmanager -print -quit)"
+          test -n "$sdkmanager"
+          "$sdkmanager" "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}"
+          test -d "$HOME/.pyside6_android_deploy/android-sdk/platforms/android-${ANDROID_API}"
+          test -d "$HOME/.pyside6_android_deploy/android-sdk/build-tools/${ANDROID_BUILD_TOOLS}"
+
+      - name: Pin Android target and Python runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python - <<'PY'
+          import os
+          import site
+          from pathlib import Path
+
+          candidates = []
+          roots = [Path(p) for p in site.getsitepackages()]
+          user_site = site.getusersitepackages()
+          if user_site:
+              roots.append(Path(user_site))
+
+          for root in roots:
+              if root.exists():
+                  candidates.extend(root.rglob("deploy_lib/android/buildozer.py"))
+
+          candidates = [p for p in candidates if "PySide6" in str(p)]
+          if len(candidates) != 1:
+              raise SystemExit(f"Expected exactly one PySide6 buildozer helper, found: {candidates}")
+
+          path = candidates[0]
+          text = path.read_text()
+
+          replacements = {
+              'self.set_value("app", "requirements", "python3,shiboken6,PySide6")':
+                  f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6")',
+              'self.set_value("app", "p4a.branch", "develop")':
+                  f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
+              'self.set_value("app", "android.archs", pysidedeploy_config.arch)':
+                  'self.set_value("app", "android.archs", pysidedeploy_config.arch)\n'
+                  f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n'
+                  f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")',
+          }
+
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Patch anchor count for {old!r} is {count}, expected 1")
+              text = text.replace(old, new)
+
+          path.write_text(text)
+          print(path)
+          for needle in (
+              f'python3=={os.environ["TARGET_PYTHON_VERSION"]}',
+              f'hostpython3=={os.environ["TARGET_PYTHON_VERSION"]}',
+              f'"android.api", "{os.environ["ANDROID_API"]}"',
+              f'"android.minapi", "{os.environ["ANDROID_MIN_API"]}"',
+              f'"p4a.branch", "{os.environ["P4A_REF"]}"',
+          ):
+              if needle not in text:
+                  raise SystemExit(f"Missing patched value: {needle}")
+          PY
 
       - name: Verify deploy CLI and inputs
         shell: bash
@@ -94,18 +171,18 @@ jobs:
           pyside6-android-deploy --help
           test -f "$GITHUB_WORKSPACE/smoke-test/main.py"
           test -f "$GITHUB_WORKSPACE/smoke-test/SmokeTest.pyproject"
-          test -f "$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
-          test -f "$GITHUB_WORKSPACE/android-wheels/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
+          test -f "$GITHUB_WORKSPACE/android-wheels/PySide6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          test -f "$GITHUB_WORKSPACE/android-wheels/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
 
-      - name: Build isolated ARM64 smoke-test APK
+      - name: Build isolated modern ARM64 smoke-test APK
         shell: bash
         working-directory: smoke-test
         run: |
           set -uo pipefail
           pyside6-android-deploy \
-            --name="QtSmokeTest" \
-            --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl" \
-            --wheel-shiboken="$GITHUB_WORKSPACE/android-wheels/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl" \
+            --name="QtSmokeModern" \
+            --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/PySide6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
+            --wheel-shiboken="$GITHUB_WORKSPACE/android-wheels/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
             --sdk-path="$HOME/.pyside6_android_deploy/android-sdk" \
             --ndk-path="$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c" \
             --keep-deployment-files \
@@ -126,30 +203,63 @@ jobs:
             exit 1
           fi
 
-      - name: Collect and inspect APK
+      - name: Validate modern APK contract
         if: success()
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p dist-smoke
+          mkdir -p dist-smoke unpacked-smoke
           apk="$(find "$GITHUB_WORKSPACE/smoke-test" "$HOME" -type f -name '*.apk' -print -quit 2>/dev/null)"
           test -n "$apk"
-          cp -v "$apk" dist-smoke/QtSmokeTest-debug.apk
-          aapt="$(find "$HOME/.pyside6_android_deploy/android-sdk/build-tools" -type f -name aapt -print 2>/dev/null | sort -V | tail -n 1 || true)"
-          if [ -n "$aapt" ]; then
-            "$aapt" dump badging dist-smoke/QtSmokeTest-debug.apk | tee dist-smoke/apk-badging.txt
-          else
-            printf '%s\n' 'aapt not found; APK collection succeeded.' > dist-smoke/apk-badging.txt
+          cp -v "$apk" dist-smoke/QtSmokeModern-debug.apk
+
+          aapt="$HOME/.pyside6_android_deploy/android-sdk/build-tools/${ANDROID_BUILD_TOOLS}/aapt"
+          test -x "$aapt"
+          "$aapt" dump badging dist-smoke/QtSmokeModern-debug.apk | tee dist-smoke/apk-badging.txt
+          grep -q "compileSdkVersion='${ANDROID_API}'" dist-smoke/apk-badging.txt
+          grep -q "targetSdkVersion:'${ANDROID_API}'" dist-smoke/apk-badging.txt
+          grep -q "sdkVersion:'${ANDROID_MIN_API}'" dist-smoke/apk-badging.txt
+          grep -q "native-code: 'arm64-v8a'" dist-smoke/apk-badging.txt
+
+          unzip -q dist-smoke/QtSmokeModern-debug.apk -d unpacked-smoke
+          test -f "unpacked-smoke/lib/arm64-v8a/libpython3.11.so"
+          if find unpacked-smoke -type f -name 'libpython3.14.so' | grep -q .; then
+            echo "Unexpected Python 3.14 runtime found in APK"
+            exit 1
           fi
 
-      - name: Upload smoke-test APK
+          {
+            echo "Expected target Python: ${TARGET_PYTHON_VERSION}"
+            echo "Expected Android API: ${ANDROID_API}"
+            echo "Expected min API: ${ANDROID_MIN_API}"
+            echo
+            echo "Packaged Python libraries:"
+            find unpacked-smoke/lib/arm64-v8a -maxdepth 1 -type f -name 'libpython*.so' -printf '%f\n' | sort
+            echo
+            echo "ELF LOAD alignment below 16 KB (informational):"
+            bad=0
+            while IFS= read -r so; do
+              min_align="$(readelf -lW "$so" | awk '$1 == "LOAD" {print $NF}' | sort -n | head -n 1)"
+              if [ -n "$min_align" ] && [ "$((min_align))" -lt 16384 ]; then
+                printf '%s %s\n' "${so#unpacked-smoke/}" "$min_align"
+                bad=$((bad + 1))
+              fi
+            done < <(find unpacked-smoke/lib/arm64-v8a -type f -name '*.so' | sort)
+            echo "Count below 16 KB: $bad"
+          } | tee dist-smoke/runtime-validation.txt
+
+          sha256sum dist-smoke/QtSmokeModern-debug.apk | tee dist-smoke/sha256.txt
+
+      - name: Upload modern smoke-test APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: QtSmokeTest-apk
+          name: QtSmokeModern-apk
           path: |
-            dist-smoke/QtSmokeTest-debug.apk
+            dist-smoke/QtSmokeModern-debug.apk
             dist-smoke/apk-badging.txt
+            dist-smoke/runtime-validation.txt
+            dist-smoke/sha256.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -157,7 +267,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: QtSmokeTest-build-diagnostics
+          name: QtSmokeModern-build-diagnostics
           path: |
             smoke-test/android-smoke-build.log
             smoke-test/pysidedeploy.spec
