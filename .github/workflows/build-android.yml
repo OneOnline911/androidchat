@@ -32,7 +32,25 @@ jobs:
           python -m pip install "PySide6==6.10.1" anthropic packaging
           sudo apt-get update
           sudo apt-get install -y \
+            ant \
+            autoconf \
+            automake \
+            autopoint \
+            ccache \
+            cmake \
+            g++ \
+            gcc \
+            git \
+            lbzip2 \
+            libffi-dev \
+            libltdl-dev \
+            libtool \
+            libssl-dev \
+            make \
             openjdk-17-jdk \
+            patch \
+            pkg-config \
+            python3-dev \
             unzip \
             zip \
             wget \
