@@ -9,7 +9,7 @@ on:
       - ".github/workflows/build-smoke-test.yml"
 
 env:
-  PYSIDE_VERSION: "6.10.1"
+  PYSIDE_VERSION: "6.11.2"
   TARGET_PYTHON_VERSION: "3.11.16"
   P4A_REF: "v2026.05.09"
   ANDROID_API: "36"
