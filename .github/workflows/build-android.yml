@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - "android_app.py.gz.b64"
+      - "android_app.py.gz.b64.part2"
+      - "android_app.py.gz.b64.part3"
       - "requirements.txt"
       - ".github/workflows/build-android.yml"
 
@@ -52,7 +54,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p android-app
-          base64 -d android_app.py.gz.b64 | gzip -d > android-app/main.py
+          cat android_app.py.gz.b64 android_app.py.gz.b64.part2 android_app.py.gz.b64.part3 | base64 -d | gzip -d > android-app/main.py
           cat > android-app/AndroidChat.pyproject <<'EOF'
           {
               "files": ["main.py"]
