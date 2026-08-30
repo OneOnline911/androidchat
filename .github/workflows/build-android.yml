@@ -1,14 +1,24 @@
-name: Build Android APK
+name: Build Android App APK
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - "android_main.py.gz.b64"
+      - "android_app.py.gz.b64"
       - "requirements.txt"
-      - "AndroidChat.pyproject"
       - ".github/workflows/build-android.yml"
+
+env:
+  PYSIDE_VERSION: "6.11.2"
+  TARGET_PYTHON_VERSION: "3.11.16"
+  P4A_REF: "v2026.05.09"
+  ANDROID_API: "36"
+  ANDROID_MIN_API: "36"
+  ANDROID_NDK_API: "28"
+  ANDROID_BUILD_TOOLS: "36.0.0"
+  ANDROID_NDK_VERSION: "29.0.14206865"
+  NATIVE_CACHE_REV: "fullapp-v1-anthropic"
 
 jobs:
   build:
@@ -17,136 +27,197 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - name: Restore application source
-        run: base64 -d android_main.py.gz.b64 | gzip -d > main.py
+      - name: Restore Android toolchain cache
+        id: toolchain-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pyside6_android_deploy
+            android-wheels
+          key: ${{ runner.os }}-qtandroid-${{ env.PYSIDE_VERSION }}-api${{ env.ANDROID_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Install host tools
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "PySide6==6.10.1" anthropic packaging
-          sudo apt-get update
-          sudo apt-get install -y \
-            ant \
-            autoconf \
-            automake \
-            autopoint \
-            ccache \
-            cmake \
-            g++ \
-            gcc \
-            git \
-            lbzip2 \
-            libffi-dev \
-            libltdl-dev \
-            libtool \
-            libssl-dev \
-            make \
-            openjdk-17-jdk \
-            patch \
-            pkg-config \
-            python3-dev \
-            unzip \
-            zip \
-            wget \
-            libdouble-conversion3 \
-            libmd4c0 \
-            libgl1 \
-            libegl1 \
-            libxkbcommon0 \
-            libfontconfig1 \
-            libdbus-1-3
+      - name: Restore native p4a app cache
+        uses: actions/cache@v4
+        with:
+          path: android-app/.buildozer
+          key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Download public Android PySide wheels
-        run: |
-          mkdir -p android-wheels
-          cd android-wheels
-          wget -q --show-progress https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
-          wget -q --show-progress https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
-          test -f PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
-          test -f shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl
-
-      - name: Prepare Android SDK and NDK
-        run: |
-          git clone --depth 1 --branch 6.10.1 https://code.qt.io/pyside/pyside-setup.git /tmp/pyside-setup
-          python -m pip install -r /tmp/pyside-setup/tools/cross_compile_android/requirements.txt
-          python -m pip install -r /tmp/pyside-setup/sources/pyside-tools/requirements-android.txt
-          python /tmp/pyside-setup/tools/cross_compile_android/main.py --download-only --skip-update --auto-accept-license
-          test -d "$HOME/.pyside6_android_deploy/android-sdk"
-          test -d "$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c"
-
-      - name: Verify deploy CLI and inputs
+      - name: Restore current application source
         shell: bash
         run: |
           set -euxo pipefail
-          pyside6-android-deploy --help
-          test -f main.py
-          test -f "$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
-          test -f "$GITHUB_WORKSPACE/android-wheels/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl"
-          test -d "$HOME/.pyside6_android_deploy/android-sdk"
-          test -d "$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c"
+          mkdir -p android-app
+          base64 -d android_app.py.gz.b64 | gzip -d > android-app/main.py
+          cat > android-app/AndroidChat.pyproject <<'EOF'
+          {
+              "files": ["main.py"]
+          }
+          EOF
+          python -m py_compile android-app/main.py
 
-      - name: Build ARM64 debug APK
+      - name: Install host build tools
         shell: bash
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install "PySide6==${PYSIDE_VERSION}" anthropic packaging
+          sudo apt-get update
+          sudo apt-get install -y ant autoconf automake autopoint ccache cmake g++ gcc git lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch pkg-config python3-dev unzip zip wget binutils libdouble-conversion3 libmd4c0 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+
+      - name: Prepare Android wheels and SDK
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p android-wheels
+          cd android-wheels
+          wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/pyside6/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          cd ..
+          git clone --depth 1 --branch "${PYSIDE_VERSION}" https://code.qt.io/pyside/pyside-setup.git /tmp/pyside-setup
+          python -m pip install -r /tmp/pyside-setup/tools/cross_compile_android/requirements.txt
+          python -m pip install -r /tmp/pyside-setup/sources/pyside-tools/requirements-android.txt
+          python /tmp/pyside-setup/tools/cross_compile_android/main.py --download-only --skip-update --auto-accept-license
+          sdk_root="$HOME/.pyside6_android_deploy/android-sdk"
+          cli_zip=/tmp/commandlinetools-linux-15859902_latest.zip
+          wget -q --show-progress "https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip" -O "$cli_zip"
+          echo "4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583  $cli_zip" | sha256sum -c -
+          rm -rf /tmp/android-cli "$sdk_root/cmdline-tools/latest"
+          mkdir -p /tmp/android-cli "$sdk_root/cmdline-tools/latest"
+          unzip -q "$cli_zip" -d /tmp/android-cli
+          cp -a /tmp/android-cli/cmdline-tools/. "$sdk_root/cmdline-tools/latest/"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --sdk_root="$sdk_root" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" --sdk_root="$sdk_root" "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Patch deployer for full Android app
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python - <<'PY'
+          import os
+          import site
+          from pathlib import Path
+          roots = [Path(p) for p in site.getsitepackages()]
+          user_site = site.getusersitepackages()
+          if user_site:
+              roots.append(Path(user_site))
+          buildozer_candidates = []
+          recipe_candidates = []
+          for root in roots:
+              if root.exists():
+                  buildozer_candidates.extend(root.rglob("deploy_lib/android/buildozer.py"))
+                  recipe_candidates.extend(root.rglob("deploy_lib/android/recipes/PySide6/__init__.tmpl.py"))
+          buildozer_candidates = [p for p in buildozer_candidates if "PySide6" in str(p)]
+          recipe_candidates = [p for p in recipe_candidates if "PySide6" in str(p)]
+          if len(buildozer_candidates) != 1 or len(recipe_candidates) != 1:
+              raise SystemExit(f"Unexpected PySide deploy files: {buildozer_candidates} {recipe_candidates}")
+          path = buildozer_candidates[0]
+          text = path.read_text()
+          replacements = {
+              'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6,anthropic")',
+              'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
+              'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
+              'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "INTERNET")',
+              'self.set_value("app", "p4a.extra_args", extra_args)': 'self.set_value("app", "p4a.extra_args", extra_args + " --allow-minsdk-ndkapi-mismatch")',
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f"Patch anchor count for {old!r}: {text.count(old)}")
+              text = text.replace(old, new)
+          path.write_text(text)
+          recipe = recipe_candidates[0]
+          rtext = recipe.read_text()
+          old = 'shutil.copytree(lib_dir, self.ctx.get_libs_dir(arch.arch), dirs_exist_ok=True)'
+          new = '''target_lib_dir = Path(self.ctx.get_libs_dir(arch.arch))\n        target_lib_dir.mkdir(parents=True, exist_ok=True)\n        for qt_module in ("Core", "Gui", "Widgets"):\n            qt_lib = lib_dir / f"libQt6{qt_module}_{arch.arch}.so"\n            if not qt_lib.exists():\n                raise FileNotFoundError(qt_lib)\n            shutil.copyfile(qt_lib, target_lib_dir / qt_lib.name)'''
+          if rtext.count(old) != 1:
+              raise SystemExit(f"PySide recipe copytree anchor count: {rtext.count(old)}")
+          recipe.write_text(rtext.replace(old, new))
+          PY
+
+      - name: Build Android 16 ARM64 app
+        shell: bash
+        working-directory: android-app
+        env:
+          LDFLAGS: "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
+          CCACHE_DIR: "$HOME/.cache/ccache"
         run: |
           set -uo pipefail
           pyside6-android-deploy \
             --name="AndroidChat" \
-            --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/PySide6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl" \
-            --wheel-shiboken="$GITHUB_WORKSPACE/android-wheels/shiboken6-6.10.1-6.10.1-cp311-cp311-android_aarch64.whl" \
+            --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
+            --wheel-shiboken="$GITHUB_WORKSPACE/android-wheels/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
             --sdk-path="$HOME/.pyside6_android_deploy/android-sdk" \
-            --ndk-path="$HOME/.pyside6_android_deploy/android-ndk/android-ndk-r27c" \
+            --ndk-path="$HOME/.pyside6_android_deploy/android-sdk/ndk/${ANDROID_NDK_VERSION}" \
             --keep-deployment-files \
             --force \
-            --verbose 2>&1 | tee android-build.log
+            --verbose 2>&1 | tee android-app-build.log
           deploy_rc=${PIPESTATUS[0]}
-          echo "pyside6-android-deploy exit code: $deploy_rc"
-          echo "APK/AAB candidates in workspace and home:"
-          find "$GITHUB_WORKSPACE" "$HOME" -type f \( -name '*.apk' -o -name '*.aab' \) -print 2>/dev/null || true
-          if grep -q '^Exception occurred:' android-build.log; then
-            echo "PySide Android deploy swallowed an internal exception; failing the job explicitly."
-            exit 1
-          fi
-          if [ "$deploy_rc" -ne 0 ]; then
-            exit "$deploy_rc"
-          fi
-          apk="$(find "$GITHUB_WORKSPACE" "$HOME" -type f -name '*.apk' -print -quit 2>/dev/null)"
-          if [ -z "$apk" ]; then
-            echo "No APK was produced."
-            exit 1
-          fi
+          if grep -q '^Exception occurred:' android-app-build.log; then exit 1; fi
+          if [ "$deploy_rc" -ne 0 ]; then exit "$deploy_rc"; fi
+          test -n "$(find "$GITHUB_WORKSPACE/android-app" -type f -name '*.apk' -print -quit 2>/dev/null)"
 
-      - name: Collect APK
+      - name: Validate Android app APK
         if: success()
+        shell: bash
         run: |
-          mkdir -p dist
-          apk="$(find "$GITHUB_WORKSPACE" "$HOME" -type f -name '*.apk' -print -quit 2>/dev/null)"
-          test -n "$apk"
-          cp -v "$apk" dist/
+          set -euxo pipefail
+          rm -rf dist-app unpacked-app
+          mkdir -p dist-app unpacked-app
+          apk="$(find "$GITHUB_WORKSPACE/android-app" -type f -name '*.apk' -print -quit 2>/dev/null)"
+          cp -v "$apk" dist-app/AndroidChat.apk
+          aapt="$HOME/.pyside6_android_deploy/android-sdk/build-tools/${ANDROID_BUILD_TOOLS}/aapt"
+          "$aapt" dump badging dist-app/AndroidChat.apk | tee dist-app/apk-badging.txt
+          grep -q "compileSdkVersion='36'" dist-app/apk-badging.txt
+          grep -q "targetSdkVersion:'36'" dist-app/apk-badging.txt
+          grep -q "sdkVersion:'36'" dist-app/apk-badging.txt
+          grep -q "native-code: 'arm64-v8a'" dist-app/apk-badging.txt
+          grep -q "android.permission.INTERNET" dist-app/apk-badging.txt
+          unzip -q dist-app/AndroidChat.apk -d unpacked-app
+          test -f unpacked-app/lib/arm64-v8a/libpython3.11.so
+          test -f unpacked-app/lib/arm64-v8a/libQt6Core_arm64-v8a.so
+          test -f unpacked-app/lib/arm64-v8a/libQt6Gui_arm64-v8a.so
+          test -f unpacked-app/lib/arm64-v8a/libQt6Widgets_arm64-v8a.so
+          test -f unpacked-app/lib/arm64-v8a/libplugins_platforms_qtforandroid_arm64-v8a.so
+          extra_qt="$(find unpacked-app/lib/arm64-v8a -maxdepth 1 -type f -name 'libQt6*_arm64-v8a.so' ! -name 'libQt6Core_arm64-v8a.so' ! -name 'libQt6Gui_arm64-v8a.so' ! -name 'libQt6Widgets_arm64-v8a.so' -print)"
+          test -z "$extra_qt"
+          bad=0
+          while IFS= read -r so; do
+            if ! readelf -h "$so" >/dev/null 2>&1; then continue; fi
+            min_align="$(readelf -lW "$so" | awk '$1 == "LOAD" {print $NF}' | sort -n | head -n 1)"
+            if [ -n "$min_align" ] && [ "$((min_align))" -lt 16384 ]; then
+              rel="${so#unpacked-app/}"
+              if [ "$rel" != "lib/arm64-v8a/libshiboken6.abi3.so" ]; then
+                printf '%s %s\n' "$rel" "$min_align"
+                bad=$((bad + 1))
+              fi
+            fi
+          done < <(find unpacked-app/lib/arm64-v8a -type f -name '*.so' | sort)
+          test "$bad" -eq 0
+          du -h dist-app/AndroidChat.apk
 
-      - name: Upload APK
+      - name: Upload APK only
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: AndroidChat-apk
-          path: dist/*.apk
+          path: dist-app/AndroidChat.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload deployment diagnostics
+      - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: AndroidChat-build-diagnostics
           path: |
-            android-build.log
-            pysidedeploy.spec
-            buildozer.spec
-            .buildozer/**
+            android-app/android-app-build.log
+            android-app/pysidedeploy.spec
+            android-app/buildozer.spec
           if-no-files-found: ignore
           retention-days: 7
