@@ -5,9 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "android_app.py.gz.b64"
-      - "android_app.py.gz.b64.part2"
-      - "android_app.py.gz.b64.part3"
+      - "app.py"
       - "requirements.txt"
       - ".github/workflows/build-android.yml"
 
@@ -20,7 +18,7 @@ env:
   ANDROID_NDK_API: "28"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
-  NATIVE_CACHE_REV: "fullapp-v1-anthropic"
+  NATIVE_CACHE_REV: "fullapp-v2-direct-source"
 
 jobs:
   build:
@@ -29,6 +27,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -49,16 +48,42 @@ jobs:
           path: android-app/.buildozer
           key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Restore current application source
+      - name: Prepare current application source
         shell: bash
         run: |
           set -euxo pipefail
+          test -s app.py
+          python -m py_compile app.py
           mkdir -p android-app
-          {
-            base64 -d android_app.py.gz.b64
-            base64 -d android_app.py.gz.b64.part2
-            base64 -d android_app.py.gz.b64.part3
-          } | gzip -d > android-app/main.py
+          cp app.py android-app/main.py
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("android-app/main.py")
+          text = path.read_text(encoding="utf-8")
+
+          old_import = "from PySide6.QtCore import QMimeData, Qt, QThread, QUrl, Signal"
+          new_import = "from PySide6.QtCore import QMimeData, QStandardPaths, Qt, QThread, QUrl, Signal"
+          if text.count(old_import) != 1:
+              raise SystemExit(f"QtCore import anchor count: {text.count(old_import)}")
+          text = text.replace(old_import, new_import)
+
+          old_root = 'ROOT = Path(__file__).resolve().parent\nFILES_DIR = ROOT / "files"'
+          new_root = '''ROOT = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))\nROOT.mkdir(parents=True, exist_ok=True)\nFILES_DIR = ROOT / "files"'''
+          if text.count(old_root) != 1:
+              raise SystemExit(f"ROOT anchor count: {text.count(old_root)}")
+          text = text.replace(old_root, new_root)
+
+          old_client = '''        self.client = Anthropic(\n            api_key=load_api_key(),\n            base_url=BASE_URL,\n            max_retries=0,\n        )'''
+          new_client = '''        try:\n            startup_api_key = load_api_key()\n        except Exception:\n            startup_api_key = "not-configured"\n        self.client = Anthropic(\n            api_key=startup_api_key,\n            base_url=BASE_URL,\n            max_retries=0,\n        )'''
+          if text.count(old_client) != 1:
+              raise SystemExit(f"startup client anchor count: {text.count(old_client)}")
+          text = text.replace(old_client, new_client)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
           cat > android-app/AndroidChat.pyproject <<'EOF'
           {
               "files": ["main.py"]
@@ -71,7 +96,7 @@ jobs:
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "PySide6==${PYSIDE_VERSION}" anthropic packaging
+          python -m pip install "PySide6==${PYSIDE_VERSION}" anthropic requests packaging
           sudo apt-get update
           sudo apt-get install -y ant autoconf automake autopoint ccache cmake g++ gcc git lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch pkg-config python3-dev unzip zip wget binutils libdouble-conversion3 libmd4c0 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
@@ -101,7 +126,7 @@ jobs:
           yes | "$sdkmanager" --sdk_root="$sdk_root" --licenses >/dev/null 2>&1 || true
           "$sdkmanager" --sdk_root="$sdk_root" "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
 
-      - name: Patch deployer for full Android app
+      - name: Patch deployer for Android 16 app
         shell: bash
         run: |
           set -euxo pipefail
@@ -109,10 +134,12 @@ jobs:
           import os
           import site
           from pathlib import Path
+
           roots = [Path(p) for p in site.getsitepackages()]
           user_site = site.getusersitepackages()
           if user_site:
               roots.append(Path(user_site))
+
           buildozer_candidates = []
           recipe_candidates = []
           for root in roots:
@@ -123,10 +150,11 @@ jobs:
           recipe_candidates = [p for p in recipe_candidates if "PySide6" in str(p)]
           if len(buildozer_candidates) != 1 or len(recipe_candidates) != 1:
               raise SystemExit(f"Unexpected PySide deploy files: {buildozer_candidates} {recipe_candidates}")
+
           path = buildozer_candidates[0]
           text = path.read_text()
           replacements = {
-              'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6,anthropic")',
+              'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6,anthropic,requests")',
               'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
               'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
               'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "INTERNET")',
@@ -137,6 +165,7 @@ jobs:
                   raise SystemExit(f"Patch anchor count for {old!r}: {text.count(old)}")
               text = text.replace(old, new)
           path.write_text(text)
+
           recipe = recipe_candidates[0]
           rtext = recipe.read_text()
           old = 'shutil.copytree(lib_dir, self.ctx.get_libs_dir(arch.arch), dirs_exist_ok=True)'
