@@ -17,7 +17,7 @@ env:
   ANDROID_NDK_API: "28"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
-  NATIVE_CACHE_REV: "app-step3-anthropic-import-v1"
+  NATIVE_CACHE_REV: "app-step4-anthropic-pydantic1-v1"
 
 jobs:
   build:
@@ -46,7 +46,7 @@ jobs:
           path: android-app/.buildozer
           key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Prepare Anthropic import diagnostic source
+      - name: Prepare Anthropic plus Pydantic v1 diagnostic source
         shell: bash
         run: |
           set -euxo pipefail
@@ -54,6 +54,7 @@ jobs:
           cat > android-app/main.py <<'PY'
           import sys
           import requests
+          import pydantic
           import anthropic
           from anthropic import Anthropic
 
@@ -64,13 +65,13 @@ jobs:
               def __init__(self):
                   super().__init__()
                   self._count = 0
-                  self.setWindowTitle("Qt + Anthropic import test")
+                  self.setWindowTitle("Anthropic + Pydantic v1 test")
                   self._label = QLabel(
-                      "ANTHROPIC IMPORT TEST OK\n\n"
-                      f"requests {requests.__version__} imported.\n"
-                      f"anthropic {anthropic.__version__} imported.\n"
-                      "Anthropic class imported.\n"
-                      "No API client was created. No network request was made."
+                      "ANTHROPIC + PYDANTIC V1 IMPORT OK\n\n"
+                      f"requests {requests.__version__}\n"
+                      f"pydantic {pydantic.__version__}\n"
+                      f"anthropic {anthropic.__version__}\n"
+                      "Anthropic class imported. No API client or network request."
                   )
                   self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                   self._label.setWordWrap(True)
@@ -82,7 +83,7 @@ jobs:
 
               def _clicked(self):
                   self._count += 1
-                  self._label.setText(f"ANTHROPIC IMPORT TEST RUNNING\n\nButton taps: {self._count}")
+                  self._label.setText(f"PYDANTIC V1 TEST RUNNING\n\nButton taps: {self._count}")
 
           if __name__ == "__main__":
               app = QApplication(sys.argv)
@@ -100,7 +101,7 @@ jobs:
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "PySide6==${PYSIDE_VERSION}" requests anthropic packaging jinja2 pkginfo tqdm
+          python -m pip install "PySide6==${PYSIDE_VERSION}" requests "pydantic<2" anthropic packaging jinja2 pkginfo tqdm
           sudo apt-get update
           sudo apt-get install -y ant autoconf automake autopoint ccache cmake g++ gcc git lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch pkg-config python3-dev unzip zip wget binutils libdouble-conversion3 libmd4c0 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
@@ -130,14 +131,14 @@ jobs:
           yes | "$sdkmanager" --sdk_root="$sdk_root" --licenses >/dev/null 2>&1 || true
           "$sdkmanager" --sdk_root="$sdk_root" "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
 
-      - name: Patch deployer for Anthropic diagnostic
+      - name: Patch deployer for Anthropic Pydantic v1 diagnostic
         shell: bash
         run: |
           set -euxo pipefail
           python - <<'PY'
           import os, site
           from pathlib import Path
-          roots = [Path(p) for p in site.getsitepackages()]
+          roots=[Path(p) for p in site.getsitepackages()]
           if site.getusersitepackages(): roots.append(Path(site.getusersitepackages()))
           b=[]; r=[]
           for root in roots:
@@ -148,7 +149,7 @@ jobs:
           if len(b)!=1 or len(r)!=1: raise SystemExit(f"Unexpected deploy files: {b} {r}")
           path=b[0]; text=path.read_text()
           repl={
-            'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6,requests,anthropic")',
+            'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6,requests,pydantic<2,anthropic")',
             'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
             'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n        self.set_value("app", "android.skip_update", "True")',
             'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "")',
@@ -163,7 +164,7 @@ jobs:
           recipe.write_text(t.replace(old,new))
           PY
 
-      - name: Build Anthropic diagnostic APK
+      - name: Build Anthropic Pydantic v1 diagnostic APK
         shell: bash
         working-directory: android-app
         env:
