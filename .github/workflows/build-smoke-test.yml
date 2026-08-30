@@ -57,9 +57,9 @@ jobs:
           set -euxo pipefail
           mkdir -p android-wheels
           cd android-wheels
-          wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/pyside6/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
           wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
-          test -f "PySide6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          test -f "pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
           test -f "shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
 
       - name: Prepare current Android SDK and NDK
@@ -147,7 +147,7 @@ jobs:
           rm -rf deployment .buildozer bin
           pyside6-android-deploy \
             --name="QtSmokeModern" \
-            --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/PySide6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
+            --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
             --wheel-shiboken="$GITHUB_WORKSPACE/android-wheels/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
             --sdk-path="$HOME/.pyside6_android_deploy/android-sdk" \
             --ndk-path="$HOME/.pyside6_android_deploy/android-sdk/ndk/${ANDROID_NDK_VERSION}" \
