@@ -17,7 +17,7 @@ env:
   ANDROID_NDK_API: "28"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
-  NATIVE_CACHE_REV: "app-baseline-v1-proven-smoke"
+  NATIVE_CACHE_REV: "app-step2-requests-v1"
 
 jobs:
   build:
@@ -47,12 +47,57 @@ jobs:
           path: android-app/.buildozer
           key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Prepare proven smoke source
+      - name: Prepare requests diagnostic source
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p android-app
-          cp smoke_main.py android-app/main.py
+          cat > android-app/main.py <<'PY'
+          import sys
+          import requests
+
+          from PySide6.QtCore import Qt
+          from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
+
+
+          class SmokeWindow(QWidget):
+              def __init__(self, session):
+                  super().__init__()
+                  self._session = session
+                  self._count = 0
+                  self.setWindowTitle("Qt + requests test")
+
+                  self._label = QLabel(
+                      "REQUESTS TEST OK\n\n"
+                      f"requests {requests.__version__} imported successfully.\n"
+                      "requests.Session() was created successfully.\n"
+                      "No network request has been made."
+                  )
+                  self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                  self._label.setWordWrap(True)
+
+                  button = QPushButton("Tap test")
+                  button.clicked.connect(self._clicked)
+
+                  layout = QVBoxLayout(self)
+                  layout.addWidget(self._label)
+                  layout.addWidget(button)
+
+              def _clicked(self):
+                  self._count += 1
+                  self._label.setText(
+                      f"REQUESTS TEST RUNNING\n\nButton taps: {self._count}\n"
+                      f"Session adapters: {len(self._session.adapters)}"
+                  )
+
+
+          if __name__ == "__main__":
+              app = QApplication(sys.argv)
+              session = requests.Session()
+              window = SmokeWindow(session)
+              window.show()
+              sys.exit(app.exec())
+          PY
           cat > android-app/AndroidChat.pyproject <<'EOF'
           {
               "files": ["main.py"]
@@ -65,7 +110,7 @@ jobs:
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "PySide6==${PYSIDE_VERSION}" packaging jinja2 pkginfo tqdm
+          python -m pip install "PySide6==${PYSIDE_VERSION}" requests packaging jinja2 pkginfo tqdm
           sudo apt-get update
           sudo apt-get install -y ant autoconf automake autopoint ccache cmake g++ gcc git lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch pkg-config python3-dev unzip zip wget binutils libdouble-conversion3 libmd4c0 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
@@ -104,7 +149,7 @@ jobs:
           test -x "$HOME/.pyside6_android_deploy/android-sdk/build-tools/${ANDROID_BUILD_TOOLS}/aapt"
           test -x "$HOME/.pyside6_android_deploy/android-sdk/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
 
-      - name: Patch deployer for proven minimal Android 16 baseline
+      - name: Patch deployer for requests diagnostic
         shell: bash
         run: |
           set -euxo pipefail
@@ -135,7 +180,7 @@ jobs:
           path = buildozer_candidates[0]
           text = path.read_text()
           replacements = {
-              'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6")',
+              'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6,requests")',
               'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
               'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
               'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "")',
@@ -157,7 +202,7 @@ jobs:
           recipe.write_text(rtext.replace(old, new))
           PY
 
-      - name: Build proven baseline APK
+      - name: Build requests diagnostic APK
         shell: bash
         working-directory: android-app
         env:
@@ -180,7 +225,7 @@ jobs:
           if [ "$deploy_rc" -ne 0 ]; then exit "$deploy_rc"; fi
           test -n "$(find "$GITHUB_WORKSPACE/android-app" -type f -name '*.apk' -print -quit 2>/dev/null)"
 
-      - name: Validate proven baseline APK
+      - name: Validate requests diagnostic APK
         if: success()
         shell: bash
         run: |
