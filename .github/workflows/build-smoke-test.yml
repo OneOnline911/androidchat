@@ -18,6 +18,7 @@ env:
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
   NATIVE_CACHE_REV: "minimal-v4-ndk28"
+  APP_P4A_EXTRA_ARGS: "--allow-minsdk-ndkapi-mismatch"
 
 jobs:
   build:
@@ -138,7 +139,7 @@ jobs:
           replacements = {
               'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6")',
               'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
-              'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")\n' + '        self.set_value("app", "p4a.extra_args", "--allow-minsdk-ndkapi-mismatch")',
+              'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
               'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "")',
           }
           for old, new in replacements.items():
@@ -163,6 +164,7 @@ jobs:
         env:
           LDFLAGS: "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
           CCACHE_DIR: "$HOME/.cache/ccache"
+          APP_P4A_EXTRA_ARGS: "--allow-minsdk-ndkapi-mismatch"
         run: |
           set -uo pipefail
           touch main.py
@@ -221,7 +223,6 @@ jobs:
           done < <(find unpacked-smoke/lib/arm64-v8a -type f -name '*.so' | sort)
           test "$bad" -eq 0
           du -h dist-smoke/QtSmokeModern.apk
-          sha256sum dist-smoke/QtSmokeModern.apk > dist-smoke/sha256.txt
 
       - name: Upload APK only
         if: success()
