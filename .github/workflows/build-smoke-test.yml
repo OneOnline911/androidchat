@@ -14,9 +14,10 @@ env:
   P4A_REF: "v2026.05.09"
   ANDROID_API: "36"
   ANDROID_MIN_API: "36"
+  ANDROID_NDK_API: "28"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
-  NATIVE_CACHE_REV: "minimal-v1"
+  NATIVE_CACHE_REV: "minimal-v2"
 
 jobs:
   build:
@@ -43,8 +44,8 @@ jobs:
       - name: Restore native p4a build cache
         uses: actions/cache@v4
         with:
-          path: smoke-test/deployment/.buildozer
-          key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
+          path: smoke-test/.buildozer
+          key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
       - name: Prepare isolated source
         shell: bash
@@ -137,7 +138,7 @@ jobs:
           replacements = {
               'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6")',
               'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
-              'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
+              'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
               'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "")',
           }
           for old, new in replacements.items():
