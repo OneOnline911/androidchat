@@ -18,7 +18,6 @@ env:
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
   NATIVE_CACHE_REV: "minimal-v4-ndk28"
-  APP_P4A_EXTRA_ARGS: "--allow-minsdk-ndkapi-mismatch"
 
 jobs:
   build:
@@ -141,6 +140,7 @@ jobs:
               'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
               'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
               'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "")',
+              'self.set_value("app", "p4a.extra_args", extra_args)': 'self.set_value("app", "p4a.extra_args", extra_args + " --allow-minsdk-ndkapi-mismatch")',
           }
           for old, new in replacements.items():
               count = text.count(old)
@@ -164,7 +164,6 @@ jobs:
         env:
           LDFLAGS: "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
           CCACHE_DIR: "$HOME/.cache/ccache"
-          APP_P4A_EXTRA_ARGS: "--allow-minsdk-ndkapi-mismatch"
         run: |
           set -uo pipefail
           touch main.py
