@@ -96,7 +96,7 @@ jobs:
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "PySide6==${PYSIDE_VERSION}" anthropic requests packaging
+          python -m pip install "PySide6==${PYSIDE_VERSION}" anthropic requests packaging jinja2 pkginfo tqdm
           sudo apt-get update
           sudo apt-get install -y ant autoconf automake autopoint ccache cmake g++ gcc git lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch pkg-config python3-dev unzip zip wget binutils libdouble-conversion3 libmd4c0 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
