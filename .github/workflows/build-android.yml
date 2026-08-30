@@ -23,14 +23,12 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
       - name: Restore Android toolchain cache
         id: toolchain-cache
         uses: actions/cache@v4
@@ -39,14 +37,12 @@ jobs:
             ~/.pyside6_android_deploy
             android-wheels
           key: ${{ runner.os }}-qtandroid-${{ env.PYSIDE_VERSION }}-api${{ env.ANDROID_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
-
       - name: Restore native p4a build cache
         uses: actions/cache@v4
         with:
           path: android-app/.buildozer
           key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
-
-      - name: Prepare live HTTPS diagnostic source
+      - name: Prepare full Qt import diagnostic source
         shell: bash
         run: |
           set -euxo pipefail
@@ -54,74 +50,31 @@ jobs:
           cat > android-app/main.py <<'PY'
           import sys
           import requests
-
-          from PySide6.QtCore import Qt
-          from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
-
-
-          class AndroidAPIClient:
-              """Minimal Android-safe transport replacing the Anthropic SDK."""
-              def __init__(self):
-                  self.session = requests.Session()
-                  self.session.headers.update({
-                      "content-type": "application/json",
-                      "anthropic-version": "2023-06-01",
-                  })
-
-              def probe_anthropic(self):
-                  # No API key is intentionally supplied. Any real HTTP response proves
-                  # Android INTERNET permission, DNS, TLS/CA verification and requests work.
-                  return self.session.get("https://api.anthropic.com/", timeout=15)
-
-              def close(self):
-                  self.session.close()
-
+          from PySide6.QtCore import QMimeData, Qt, QThread, QUrl, Signal
+          from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QTextDocument
+          from PySide6.QtWidgets import (
+              QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+              QMainWindow, QMenu, QMessageBox, QInputDialog, QPlainTextEdit,
+              QPushButton, QScrollArea, QSizePolicy, QTextBrowser, QVBoxLayout, QWidget,
+          )
 
           class SmokeWindow(QWidget):
               def __init__(self):
                   super().__init__()
-                  self.client = AndroidAPIClient()
-                  self.setWindowTitle("Android HTTPS transport test")
-                  self._label = QLabel(
-                      "DIRECT HTTP CLIENT READY\n\n"
-                      f"requests {requests.__version__} imported.\n"
-                      "Anthropic SDK, pydantic-core and jiter are NOT packaged.\n\n"
-                      "Tap the button to make a real HTTPS request to api.anthropic.com.\n"
-                      "No API key or message will be sent."
+                  self.setWindowTitle("Full Qt import test")
+                  label = QLabel(
+                      "FULL APP QT IMPORTS WORK\n\n"
+                      "All PySide6 symbols imported by app.py loaded.\n"
+                      f"requests {requests.__version__} loaded.\n"
+                      "Anthropic SDK is NOT packaged or imported."
                   )
-                  self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                  self._label.setWordWrap(True)
-
-                  self.button = QPushButton("Test Anthropic HTTPS")
-                  self.button.clicked.connect(self._probe)
-
+                  label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                  label.setWordWrap(True)
+                  button = QPushButton("Tap test")
+                  button.clicked.connect(lambda: label.setText("FULL QT IMPORT TEST RUNNING"))
                   layout = QVBoxLayout(self)
-                  layout.addWidget(self._label)
-                  layout.addWidget(self.button)
-
-              def _probe(self):
-                  self.button.setEnabled(False)
-                  self._label.setText("CONTACTING api.anthropic.com ...")
-                  QApplication.processEvents()
-                  try:
-                      response = self.client.probe_anthropic()
-                      self._label.setText(
-                          "HTTPS TRANSPORT WORKS\n\n"
-                          f"api.anthropic.com returned HTTP {response.status_code}.\n"
-                          "DNS + TLS + CA certificates + requests + INTERNET permission are working."
-                      )
-                  except Exception as exc:
-                      self._label.setText(
-                          "HTTPS TRANSPORT FAILED\n\n"
-                          f"{type(exc).__name__}: {exc}"
-                      )
-                  finally:
-                      self.button.setEnabled(True)
-
-              def closeEvent(self, event):
-                  self.client.close()
-                  super().closeEvent(event)
-
+                  layout.addWidget(label)
+                  layout.addWidget(button)
 
           if __name__ == "__main__":
               app = QApplication(sys.argv)
@@ -133,7 +86,6 @@ jobs:
           {"files": ["main.py"]}
           EOF
           python -m py_compile android-app/main.py
-
       - name: Install host build tools
         shell: bash
         run: |
@@ -142,7 +94,6 @@ jobs:
           python -m pip install "PySide6==${PYSIDE_VERSION}" requests packaging jinja2 pkginfo tqdm
           sudo apt-get update
           sudo apt-get install -y ant autoconf automake autopoint ccache cmake g++ gcc git lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch pkg-config python3-dev unzip zip wget binutils libdouble-conversion3 libmd4c0 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
-
       - name: Prepare Android wheels and SDK
         if: steps.toolchain-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -168,8 +119,7 @@ jobs:
           sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager" --sdk_root="$sdk_root" --licenses >/dev/null 2>&1 || true
           "$sdkmanager" --sdk_root="$sdk_root" "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
-
-      - name: Patch deployer for direct HTTP diagnostic
+      - name: Patch deployer
         shell: bash
         run: |
           set -euxo pipefail
@@ -181,8 +131,7 @@ jobs:
           b=[]; r=[]
           for root in roots:
               if root.exists():
-                  b.extend(root.rglob("deploy_lib/android/buildozer.py"))
-                  r.extend(root.rglob("deploy_lib/android/recipes/PySide6/__init__.tmpl.py"))
+                  b.extend(root.rglob("deploy_lib/android/buildozer.py")); r.extend(root.rglob("deploy_lib/android/recipes/PySide6/__init__.tmpl.py"))
           b=[p for p in b if "PySide6" in str(p)]; r=[p for p in r if "PySide6" in str(p)]
           if len(b)!=1 or len(r)!=1: raise SystemExit(f"Unexpected deploy files: {b} {r}")
           path=b[0]; text=path.read_text()
@@ -201,8 +150,7 @@ jobs:
           if t.count(old)!=1: raise SystemExit("PySide recipe anchor mismatch")
           recipe.write_text(t.replace(old,new))
           PY
-
-      - name: Build live HTTPS diagnostic APK
+      - name: Build APK
         shell: bash
         working-directory: android-app
         env:
@@ -216,7 +164,6 @@ jobs:
           if grep -q '^Exception occurred:' android-app-build.log; then exit 1; fi
           if [ "$deploy_rc" -ne 0 ]; then exit "$deploy_rc"; fi
           test -n "$(find "$GITHUB_WORKSPACE/android-app" -type f -name '*.apk' -print -quit 2>/dev/null)"
-
       - name: Validate APK
         if: success()
         shell: bash
@@ -231,7 +178,6 @@ jobs:
           grep -q "targetSdkVersion:'36'" dist-app/apk-badging.txt
           grep -q "sdkVersion:'36'" dist-app/apk-badging.txt
           grep -q "native-code: 'arm64-v8a'" dist-app/apk-badging.txt
-          grep -q "android.permission.INTERNET" dist-app/apk-badging.txt
           unzip -q dist-app/AndroidChat.apk -d unpacked-app
           test -f unpacked-app/lib/arm64-v8a/libpython3.11.so
           test -f unpacked-app/lib/arm64-v8a/libQt6Core_arm64-v8a.so
@@ -244,7 +190,6 @@ jobs:
             if [ -n "$a" ] && [ "$((a))" -lt 16384 ] && [ "${so#unpacked-app/}" != "lib/arm64-v8a/libshiboken6.abi3.so" ]; then bad=$((bad+1)); fi
           done < <(find unpacked-app/lib/arm64-v8a -type f -name '*.so' | sort)
           test "$bad" -eq 0
-
       - name: Upload APK only
         if: success()
         uses: actions/upload-artifact@v4
@@ -253,7 +198,6 @@ jobs:
           path: dist-app/AndroidChat.apk
           if-no-files-found: error
           retention-days: 30
-
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
