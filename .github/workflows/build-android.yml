@@ -46,7 +46,7 @@ jobs:
           path: android-app/.buildozer
           key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Prepare direct HTTP diagnostic source
+      - name: Prepare live HTTPS diagnostic source
         shell: bash
         run: |
           set -euxo pipefail
@@ -68,6 +68,11 @@ jobs:
                       "anthropic-version": "2023-06-01",
                   })
 
+              def probe_anthropic(self):
+                  # No API key is intentionally supplied. Any real HTTP response proves
+                  # Android INTERNET permission, DNS, TLS/CA verification and requests work.
+                  return self.session.get("https://api.anthropic.com/", timeout=15)
+
               def close(self):
                   self.session.close()
 
@@ -75,27 +80,43 @@ jobs:
           class SmokeWindow(QWidget):
               def __init__(self):
                   super().__init__()
-                  self._count = 0
                   self.client = AndroidAPIClient()
-                  self.setWindowTitle("Android direct HTTP test")
+                  self.setWindowTitle("Android HTTPS transport test")
                   self._label = QLabel(
                       "DIRECT HTTP CLIENT READY\n\n"
                       f"requests {requests.__version__} imported.\n"
-                      "Anthropic SDK, pydantic-core and jiter are NOT packaged.\n"
-                      "A requests.Session was created successfully.\n"
-                      "No network request has been made."
+                      "Anthropic SDK, pydantic-core and jiter are NOT packaged.\n\n"
+                      "Tap the button to make a real HTTPS request to api.anthropic.com.\n"
+                      "No API key or message will be sent."
                   )
                   self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                   self._label.setWordWrap(True)
-                  button = QPushButton("Tap test")
-                  button.clicked.connect(self._clicked)
+
+                  self.button = QPushButton("Test Anthropic HTTPS")
+                  self.button.clicked.connect(self._probe)
+
                   layout = QVBoxLayout(self)
                   layout.addWidget(self._label)
-                  layout.addWidget(button)
+                  layout.addWidget(self.button)
 
-              def _clicked(self):
-                  self._count += 1
-                  self._label.setText(f"DIRECT HTTP CLIENT RUNNING\n\nButton taps: {self._count}")
+              def _probe(self):
+                  self.button.setEnabled(False)
+                  self._label.setText("CONTACTING api.anthropic.com ...")
+                  QApplication.processEvents()
+                  try:
+                      response = self.client.probe_anthropic()
+                      self._label.setText(
+                          "HTTPS TRANSPORT WORKS\n\n"
+                          f"api.anthropic.com returned HTTP {response.status_code}.\n"
+                          "DNS + TLS + CA certificates + requests + INTERNET permission are working."
+                      )
+                  except Exception as exc:
+                      self._label.setText(
+                          "HTTPS TRANSPORT FAILED\n\n"
+                          f"{type(exc).__name__}: {exc}"
+                      )
+                  finally:
+                      self.button.setEnabled(True)
 
               def closeEvent(self, event):
                   self.client.close()
@@ -181,7 +202,7 @@ jobs:
           recipe.write_text(t.replace(old,new))
           PY
 
-      - name: Build direct HTTP diagnostic APK
+      - name: Build live HTTPS diagnostic APK
         shell: bash
         working-directory: android-app
         env:
