@@ -18,7 +18,7 @@ env:
   ANDROID_NDK_API: "28"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
-  NATIVE_CACHE_REV: "fullapp-v2-direct-source"
+  NATIVE_CACHE_REV: "fullapp-v3-ui-only"
 
 jobs:
   build:
@@ -48,40 +48,71 @@ jobs:
           path: android-app/.buildozer
           key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Prepare current application source
+      - name: Prepare UI-only Android diagnostic source
         shell: bash
         run: |
           set -euxo pipefail
           test -s app.py
           python -m py_compile app.py
           mkdir -p android-app
-          cp app.py android-app/main.py
+          cat > android-app/main.py <<'PY'
+          import sys
 
-          python - <<'PY'
-          from pathlib import Path
+          import requests
+          from anthropic import Anthropic
+          from PySide6.QtCore import Qt
+          from PySide6.QtGui import QFont
+          from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
 
-          path = Path("android-app/main.py")
-          text = path.read_text(encoding="utf-8")
 
-          old_import = "from PySide6.QtCore import QMimeData, Qt, QThread, QUrl, Signal"
-          new_import = "from PySide6.QtCore import QMimeData, QStandardPaths, Qt, QThread, QUrl, Signal"
-          if text.count(old_import) != 1:
-              raise SystemExit(f"QtCore import anchor count: {text.count(old_import)}")
-          text = text.replace(old_import, new_import)
+          class DiagnosticWindow(QMainWindow):
+              def __init__(self):
+                  super().__init__()
+                  self.setWindowTitle("AndroidChat")
+                  self.resize(900, 700)
 
-          old_root = 'ROOT = Path(__file__).resolve().parent\nFILES_DIR = ROOT / "files"'
-          new_root = '''ROOT = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))\nROOT.mkdir(parents=True, exist_ok=True)\nFILES_DIR = ROOT / "files"'''
-          if text.count(old_root) != 1:
-              raise SystemExit(f"ROOT anchor count: {text.count(old_root)}")
-          text = text.replace(old_root, new_root)
+                  root = QWidget()
+                  self.setCentralWidget(root)
+                  layout = QVBoxLayout(root)
+                  layout.setContentsMargins(24, 24, 24, 24)
+                  layout.setSpacing(16)
 
-          old_client = '''        self.client = Anthropic(\n            api_key=load_api_key(),\n            base_url=BASE_URL,\n            max_retries=0,\n        )'''
-          new_client = '''        try:\n            startup_api_key = load_api_key()\n        except Exception:\n            startup_api_key = "not-configured"\n        self.client = Anthropic(\n            api_key=startup_api_key,\n            base_url=BASE_URL,\n            max_retries=0,\n        )'''
-          if text.count(old_client) != 1:
-              raise SystemExit(f"startup client anchor count: {text.count(old_client)}")
-          text = text.replace(old_client, new_client)
+                  title = QLabel("ANDROIDCHAT")
+                  title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                  title_font = QFont()
+                  title_font.setPointSize(18)
+                  title_font.setBold(True)
+                  title.setFont(title_font)
+                  layout.addWidget(title)
 
-          path.write_text(text, encoding="utf-8")
+                  status = QLabel(
+                      "UI-only diagnostic build\n\n"
+                      "Python + PySide6 + requests + anthropic imported successfully.\n"
+                      "No files are opened. No folders are created. No API client is created.\n"
+                      "No state is loaded and no network request is made."
+                  )
+                  status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                  status.setWordWrap(True)
+                  layout.addWidget(status, 1)
+
+                  self.button = QPushButton("Tap test")
+                  self.button.setMinimumHeight(64)
+                  self.button.clicked.connect(self.on_tap)
+                  layout.addWidget(self.button)
+
+              def on_tap(self):
+                  self.button.setText("UI is alive")
+
+
+          def main():
+              app = QApplication(sys.argv)
+              window = DiagnosticWindow()
+              window.show()
+              sys.exit(app.exec())
+
+
+          if __name__ == "__main__":
+              main()
           PY
 
           cat > android-app/AndroidChat.pyproject <<'EOF'
