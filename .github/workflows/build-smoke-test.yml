@@ -1,4 +1,4 @@
-name: Build Modern Qt Smoke Test APK
+name: Build Minimal Android 16 Qt APK
 
 on:
   workflow_dispatch:
@@ -13,14 +13,15 @@ env:
   TARGET_PYTHON_VERSION: "3.11.16"
   P4A_REF: "v2026.05.09"
   ANDROID_API: "36"
-  ANDROID_MIN_API: "28"
+  ANDROID_MIN_API: "36"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
+  NATIVE_CACHE_REV: "minimal-v1"
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +31,22 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Prepare isolated smoke-test source
+      - name: Restore Android toolchain cache
+        id: toolchain-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pyside6_android_deploy
+            android-wheels
+          key: ${{ runner.os }}-qtandroid-${{ env.PYSIDE_VERSION }}-api${{ env.ANDROID_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Restore native p4a build cache
+        uses: actions/cache@v4
+        with:
+          path: smoke-test/deployment/.buildozer
+          key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Prepare isolated source
         shell: bash
         run: |
           set -euxo pipefail
@@ -42,7 +58,7 @@ jobs:
           }
           EOF
 
-      - name: Install host tools
+      - name: Install host build tools
         shell: bash
         run: |
           set -euxo pipefail
@@ -51,7 +67,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ant autoconf automake autopoint ccache cmake g++ gcc git lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch pkg-config python3-dev unzip zip wget binutils libdouble-conversion3 libmd4c0 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
-      - name: Download public Android PySide wheels
+      - name: Prepare Android wheels and SDK
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euxo pipefail
@@ -59,21 +76,14 @@ jobs:
           cd android-wheels
           wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/pyside6/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
           wget -q --show-progress "https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
-          test -f "pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
-          test -f "shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          cd ..
 
-      - name: Prepare current Android SDK and NDK
-        shell: bash
-        run: |
-          set -euxo pipefail
           git clone --depth 1 --branch "${PYSIDE_VERSION}" https://code.qt.io/pyside/pyside-setup.git /tmp/pyside-setup
           python -m pip install -r /tmp/pyside-setup/tools/cross_compile_android/requirements.txt
           python -m pip install -r /tmp/pyside-setup/sources/pyside-tools/requirements-android.txt
           python /tmp/pyside-setup/tools/cross_compile_android/main.py --download-only --skip-update --auto-accept-license
 
           sdk_root="$HOME/.pyside6_android_deploy/android-sdk"
-          test -d "$sdk_root"
-
           cli_zip=/tmp/commandlinetools-linux-15859902_latest.zip
           wget -q --show-progress "https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip" -O "$cli_zip"
           echo "4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583  $cli_zip" | sha256sum -c -
@@ -81,17 +91,20 @@ jobs:
           mkdir -p /tmp/android-cli "$sdk_root/cmdline-tools/latest"
           unzip -q "$cli_zip" -d /tmp/android-cli
           cp -a /tmp/android-cli/cmdline-tools/. "$sdk_root/cmdline-tools/latest/"
-
           sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$sdkmanager"
           yes | "$sdkmanager" --sdk_root="$sdk_root" --licenses >/dev/null 2>&1 || true
           "$sdkmanager" --sdk_root="$sdk_root" "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
 
-          test -d "$sdk_root/platforms/android-${ANDROID_API}"
-          test -x "$sdk_root/build-tools/${ANDROID_BUILD_TOOLS}/aapt"
-          test -x "$sdk_root/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+      - name: Verify cached/current Android toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -f "$GITHUB_WORKSPACE/android-wheels/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          test -f "$GITHUB_WORKSPACE/android-wheels/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          test -x "$HOME/.pyside6_android_deploy/android-sdk/build-tools/${ANDROID_BUILD_TOOLS}/aapt"
+          test -x "$HOME/.pyside6_android_deploy/android-sdk/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
 
-      - name: Pin Android target and Python runtime
+      - name: Patch deployer for Android 16 only and minimal Qt
         shell: bash
         run: |
           set -euxo pipefail
@@ -99,48 +112,59 @@ jobs:
           import os
           import site
           from pathlib import Path
-          candidates = []
+
           roots = [Path(p) for p in site.getsitepackages()]
           user_site = site.getusersitepackages()
           if user_site:
               roots.append(Path(user_site))
+
+          buildozer_candidates = []
+          recipe_candidates = []
           for root in roots:
               if root.exists():
-                  candidates.extend(root.rglob("deploy_lib/android/buildozer.py"))
-          candidates = [p for p in candidates if "PySide6" in str(p)]
-          if len(candidates) != 1:
-              raise SystemExit(f"Expected exactly one PySide6 buildozer helper, found: {candidates}")
-          path = candidates[0]
+                  buildozer_candidates.extend(root.rglob("deploy_lib/android/buildozer.py"))
+                  recipe_candidates.extend(root.rglob("deploy_lib/android/recipes/PySide6/__init__.tmpl.py"))
+
+          buildozer_candidates = [p for p in buildozer_candidates if "PySide6" in str(p)]
+          recipe_candidates = [p for p in recipe_candidates if "PySide6" in str(p)]
+          if len(buildozer_candidates) != 1:
+              raise SystemExit(f"Expected one PySide buildozer helper: {buildozer_candidates}")
+          if len(recipe_candidates) != 1:
+              raise SystemExit(f"Expected one PySide recipe template: {recipe_candidates}")
+
+          path = buildozer_candidates[0]
           text = path.read_text()
           replacements = {
               'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6")',
               'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
-              'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", pysidedeploy_config.arch)\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")',
+              'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
+              'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "")',
           }
           for old, new in replacements.items():
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"Patch anchor count for {old!r} is {count}, expected 1")
+                  raise SystemExit(f"Buildozer patch anchor count for {old!r}: {count}")
               text = text.replace(old, new)
           path.write_text(text)
+
+          recipe = recipe_candidates[0]
+          rtext = recipe.read_text()
+          old = 'shutil.copytree(lib_dir, self.ctx.get_libs_dir(arch.arch), dirs_exist_ok=True)'
+          new = '''target_lib_dir = Path(self.ctx.get_libs_dir(arch.arch))\n        target_lib_dir.mkdir(parents=True, exist_ok=True)\n        for qt_module in ("Core", "Gui", "Widgets"):\n            qt_lib = lib_dir / f"libQt6{qt_module}_{arch.arch}.so"\n            if not qt_lib.exists():\n                raise FileNotFoundError(qt_lib)\n            shutil.copyfile(qt_lib, target_lib_dir / qt_lib.name)'''
+          if rtext.count(old) != 1:
+              raise SystemExit(f"PySide recipe copytree anchor count: {rtext.count(old)}")
+          recipe.write_text(rtext.replace(old, new))
           PY
 
-      - name: Verify deploy CLI and inputs
-        shell: bash
-        run: |
-          set -euxo pipefail
-          pyside6-android-deploy --help
-          test -f "$GITHUB_WORKSPACE/smoke-test/main.py"
-          test -f "$GITHUB_WORKSPACE/smoke-test/SmokeTest.pyproject"
-
-      - name: Build isolated modern ARM64 smoke-test APK
+      - name: Build incremental ARM64 APK
         shell: bash
         working-directory: smoke-test
         env:
           LDFLAGS: "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
+          CCACHE_DIR: "$HOME/.cache/ccache"
         run: |
           set -uo pipefail
-          rm -rf deployment .buildozer bin
+          touch main.py
           pyside6-android-deploy \
             --name="QtSmokeModern" \
             --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
@@ -153,72 +177,61 @@ jobs:
           deploy_rc=${PIPESTATUS[0]}
           if grep -q '^Exception occurred:' android-smoke-build.log; then exit 1; fi
           if [ "$deploy_rc" -ne 0 ]; then exit "$deploy_rc"; fi
-          apk="$(find "$GITHUB_WORKSPACE/smoke-test" "$HOME" -type f -name '*.apk' -print -quit 2>/dev/null)"
+          apk="$(find "$GITHUB_WORKSPACE/smoke-test" -type f -name '*.apk' -print -quit 2>/dev/null)"
           test -n "$apk"
 
-      - name: Validate modern APK contract
+      - name: Validate minimal Android 16 APK
         if: success()
         shell: bash
         run: |
           set -euxo pipefail
+          rm -rf dist-smoke unpacked-smoke
           mkdir -p dist-smoke unpacked-smoke
-          apk="$(find "$GITHUB_WORKSPACE/smoke-test" "$HOME" -type f -name '*.apk' -print -quit 2>/dev/null)"
-          test -n "$apk"
-          cp -v "$apk" dist-smoke/QtSmokeModern-debug.apk
+          apk="$(find "$GITHUB_WORKSPACE/smoke-test" -type f -name '*.apk' -print -quit 2>/dev/null)"
+          cp -v "$apk" dist-smoke/QtSmokeModern.apk
           aapt="$HOME/.pyside6_android_deploy/android-sdk/build-tools/${ANDROID_BUILD_TOOLS}/aapt"
-          "$aapt" dump badging dist-smoke/QtSmokeModern-debug.apk | tee dist-smoke/apk-badging.txt
-          grep -q "compileSdkVersion='${ANDROID_API}'" dist-smoke/apk-badging.txt
-          grep -q "targetSdkVersion:'${ANDROID_API}'" dist-smoke/apk-badging.txt
-          grep -q "sdkVersion:'${ANDROID_MIN_API}'" dist-smoke/apk-badging.txt
+          "$aapt" dump badging dist-smoke/QtSmokeModern.apk | tee dist-smoke/apk-badging.txt
+          grep -q "compileSdkVersion='36'" dist-smoke/apk-badging.txt
+          grep -q "targetSdkVersion:'36'" dist-smoke/apk-badging.txt
+          grep -q "sdkVersion:'36'" dist-smoke/apk-badging.txt
           grep -q "native-code: 'arm64-v8a'" dist-smoke/apk-badging.txt
-          unzip -q dist-smoke/QtSmokeModern-debug.apk -d unpacked-smoke
-          test -f "unpacked-smoke/lib/arm64-v8a/libpython3.11.so"
-          if find unpacked-smoke -type f -name 'libpython3.14.so' | grep -q .; then exit 1; fi
-          {
-            echo "Expected target Python: ${TARGET_PYTHON_VERSION}"
-            echo "Expected Android API: ${ANDROID_API}"
-            echo "Expected min API: ${ANDROID_MIN_API}"
-            echo "Expected NDK: ${ANDROID_NDK_VERSION}"
-            echo
-            echo "ELF LOAD alignment below 16 KB:"
-            bad=0
-            known_qt_wheel_exception=0
-            while IFS= read -r so; do
-              if ! readelf -h "$so" >/dev/null 2>&1; then
-                continue
-              fi
-              min_align="$(readelf -lW "$so" | awk '$1 == "LOAD" {print $NF}' | sort -n | head -n 1)"
-              if [ -n "$min_align" ] && [ "$((min_align))" -lt 16384 ]; then
-                rel="${so#unpacked-smoke/}"
-                printf '%s %s\n' "$rel" "$min_align"
-                if [ "$rel" = "lib/arm64-v8a/libshiboken6.abi3.so" ]; then
-                  known_qt_wheel_exception=$((known_qt_wheel_exception + 1))
-                else
-                  bad=$((bad + 1))
-                fi
-              fi
-            done < <(find unpacked-smoke/lib/arm64-v8a -type f -name '*.so' | sort)
-            echo "Unexpected count below 16 KB: $bad"
-            echo "Known Qt 6.11.2 shiboken wheel exceptions: $known_qt_wheel_exception"
-            test "$bad" -eq 0
-            test "$known_qt_wheel_exception" -le 1
-          } | tee dist-smoke/runtime-validation.txt
-          sha256sum dist-smoke/QtSmokeModern-debug.apk | tee dist-smoke/sha256.txt
+          if grep -q 'READ_EXTERNAL_STORAGE\|WRITE_EXTERNAL_STORAGE' dist-smoke/apk-badging.txt; then exit 1; fi
 
-      - name: Upload modern smoke-test APK
+          unzip -q dist-smoke/QtSmokeModern.apk -d unpacked-smoke
+          test -f unpacked-smoke/lib/arm64-v8a/libpython3.11.so
+          test -f unpacked-smoke/lib/arm64-v8a/libQt6Core_arm64-v8a.so
+          test -f unpacked-smoke/lib/arm64-v8a/libQt6Gui_arm64-v8a.so
+          test -f unpacked-smoke/lib/arm64-v8a/libQt6Widgets_arm64-v8a.so
+          test -f unpacked-smoke/lib/arm64-v8a/libplugins_platforms_qtforandroid_arm64-v8a.so
+
+          extra_qt="$(find unpacked-smoke/lib/arm64-v8a -maxdepth 1 -type f -name 'libQt6*_arm64-v8a.so' ! -name 'libQt6Core_arm64-v8a.so' ! -name 'libQt6Gui_arm64-v8a.so' ! -name 'libQt6Widgets_arm64-v8a.so' -print)"
+          test -z "$extra_qt"
+
+          bad=0
+          while IFS= read -r so; do
+            if ! readelf -h "$so" >/dev/null 2>&1; then continue; fi
+            min_align="$(readelf -lW "$so" | awk '$1 == "LOAD" {print $NF}' | sort -n | head -n 1)"
+            if [ -n "$min_align" ] && [ "$((min_align))" -lt 16384 ]; then
+              rel="${so#unpacked-smoke/}"
+              if [ "$rel" != "lib/arm64-v8a/libshiboken6.abi3.so" ]; then
+                bad=$((bad + 1))
+              fi
+            fi
+          done < <(find unpacked-smoke/lib/arm64-v8a -type f -name '*.so' | sort)
+          test "$bad" -eq 0
+          du -h dist-smoke/QtSmokeModern.apk
+          sha256sum dist-smoke/QtSmokeModern.apk > dist-smoke/sha256.txt
+
+      - name: Upload APK only
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: QtSmokeModern-apk
-          path: |
-            dist-smoke/QtSmokeModern-debug.apk
-            dist-smoke/apk-badging.txt
-            dist-smoke/runtime-validation.txt
-            dist-smoke/sha256.txt
+          path: dist-smoke/QtSmokeModern.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload smoke-test diagnostics
+      - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -227,6 +240,5 @@ jobs:
             smoke-test/android-smoke-build.log
             smoke-test/pysidedeploy.spec
             smoke-test/buildozer.spec
-            smoke-test/.buildozer/**
           if-no-files-found: ignore
           retention-days: 7
