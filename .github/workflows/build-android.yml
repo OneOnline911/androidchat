@@ -5,8 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "app.py"
-      - "requirements.txt"
+      - "smoke_main.py"
       - ".github/workflows/build-android.yml"
 
 env:
@@ -18,12 +17,12 @@ env:
   ANDROID_NDK_API: "28"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "29.0.14206865"
-  NATIVE_CACHE_REV: "fullapp-v3-ui-only"
+  NATIVE_CACHE_REV: "app-baseline-v1-proven-smoke"
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -42,79 +41,18 @@ jobs:
             android-wheels
           key: ${{ runner.os }}-qtandroid-${{ env.PYSIDE_VERSION }}-api${{ env.ANDROID_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Restore native p4a app cache
+      - name: Restore native p4a build cache
         uses: actions/cache@v4
         with:
           path: android-app/.buildozer
           key: ${{ runner.os }}-p4a-${{ env.NATIVE_CACHE_REV }}-qt${{ env.PYSIDE_VERSION }}-py${{ env.TARGET_PYTHON_VERSION }}-api${{ env.ANDROID_API }}-ndkapi${{ env.ANDROID_NDK_API }}-ndk${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Prepare UI-only Android diagnostic source
+      - name: Prepare proven smoke source
         shell: bash
         run: |
           set -euxo pipefail
-          test -s app.py
-          python -m py_compile app.py
           mkdir -p android-app
-          cat > android-app/main.py <<'PY'
-          import sys
-
-          import requests
-          from anthropic import Anthropic
-          from PySide6.QtCore import Qt
-          from PySide6.QtGui import QFont
-          from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
-
-
-          class DiagnosticWindow(QMainWindow):
-              def __init__(self):
-                  super().__init__()
-                  self.setWindowTitle("AndroidChat")
-                  self.resize(900, 700)
-
-                  root = QWidget()
-                  self.setCentralWidget(root)
-                  layout = QVBoxLayout(root)
-                  layout.setContentsMargins(24, 24, 24, 24)
-                  layout.setSpacing(16)
-
-                  title = QLabel("ANDROIDCHAT")
-                  title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                  title_font = QFont()
-                  title_font.setPointSize(18)
-                  title_font.setBold(True)
-                  title.setFont(title_font)
-                  layout.addWidget(title)
-
-                  status = QLabel(
-                      "UI-only diagnostic build\n\n"
-                      "Python + PySide6 + requests + anthropic imported successfully.\n"
-                      "No files are opened. No folders are created. No API client is created.\n"
-                      "No state is loaded and no network request is made."
-                  )
-                  status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                  status.setWordWrap(True)
-                  layout.addWidget(status, 1)
-
-                  self.button = QPushButton("Tap test")
-                  self.button.setMinimumHeight(64)
-                  self.button.clicked.connect(self.on_tap)
-                  layout.addWidget(self.button)
-
-              def on_tap(self):
-                  self.button.setText("UI is alive")
-
-
-          def main():
-              app = QApplication(sys.argv)
-              window = DiagnosticWindow()
-              window.show()
-              sys.exit(app.exec())
-
-
-          if __name__ == "__main__":
-              main()
-          PY
-
+          cp smoke_main.py android-app/main.py
           cat > android-app/AndroidChat.pyproject <<'EOF'
           {
               "files": ["main.py"]
@@ -127,7 +65,7 @@ jobs:
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "PySide6==${PYSIDE_VERSION}" anthropic requests packaging jinja2 pkginfo tqdm
+          python -m pip install "PySide6==${PYSIDE_VERSION}" packaging jinja2 pkginfo tqdm
           sudo apt-get update
           sudo apt-get install -y ant autoconf automake autopoint ccache cmake g++ gcc git lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch pkg-config python3-dev unzip zip wget binutils libdouble-conversion3 libmd4c0 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
@@ -157,7 +95,16 @@ jobs:
           yes | "$sdkmanager" --sdk_root="$sdk_root" --licenses >/dev/null 2>&1 || true
           "$sdkmanager" --sdk_root="$sdk_root" "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
 
-      - name: Patch deployer for Android 16 app
+      - name: Verify cached/current Android toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -f "$GITHUB_WORKSPACE/android-wheels/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          test -f "$GITHUB_WORKSPACE/android-wheels/shiboken6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl"
+          test -x "$HOME/.pyside6_android_deploy/android-sdk/build-tools/${ANDROID_BUILD_TOOLS}/aapt"
+          test -x "$HOME/.pyside6_android_deploy/android-sdk/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+
+      - name: Patch deployer for proven minimal Android 16 baseline
         shell: bash
         run: |
           set -euxo pipefail
@@ -177,23 +124,27 @@ jobs:
               if root.exists():
                   buildozer_candidates.extend(root.rglob("deploy_lib/android/buildozer.py"))
                   recipe_candidates.extend(root.rglob("deploy_lib/android/recipes/PySide6/__init__.tmpl.py"))
+
           buildozer_candidates = [p for p in buildozer_candidates if "PySide6" in str(p)]
           recipe_candidates = [p for p in recipe_candidates if "PySide6" in str(p)]
-          if len(buildozer_candidates) != 1 or len(recipe_candidates) != 1:
-              raise SystemExit(f"Unexpected PySide deploy files: {buildozer_candidates} {recipe_candidates}")
+          if len(buildozer_candidates) != 1:
+              raise SystemExit(f"Expected one PySide buildozer helper: {buildozer_candidates}")
+          if len(recipe_candidates) != 1:
+              raise SystemExit(f"Expected one PySide recipe template: {recipe_candidates}")
 
           path = buildozer_candidates[0]
           text = path.read_text()
           replacements = {
-              'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6,anthropic,requests")',
+              'self.set_value("app", "requirements", "python3,shiboken6,PySide6")': f'self.set_value("app", "requirements", "python3=={os.environ["TARGET_PYTHON_VERSION"]},hostpython3=={os.environ["TARGET_PYTHON_VERSION"]},shiboken6,PySide6")',
               'self.set_value("app", "p4a.branch", "develop")': f'self.set_value("app", "p4a.branch", "{os.environ["P4A_REF"]}")',
               'self.set_value("app", "android.archs", pysidedeploy_config.arch)': 'self.set_value("app", "android.archs", "arm64-v8a")\n' + f'        self.set_value("app", "android.api", "{os.environ["ANDROID_API"]}")\n' + f'        self.set_value("app", "android.minapi", "{os.environ["ANDROID_MIN_API"]}")\n' + f'        self.set_value("app", "android.ndk_api", "{os.environ["ANDROID_NDK_API"]}")\n' + '        self.set_value("app", "android.private_storage", "True")\n' + '        self.set_value("app", "android.skip_update", "True")',
-              'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "INTERNET")',
+              'self.set_value("app", "android.permissions", permissions)': 'self.set_value("app", "android.permissions", "")',
               'self.set_value("app", "p4a.extra_args", extra_args)': 'self.set_value("app", "p4a.extra_args", extra_args + " --allow-minsdk-ndkapi-mismatch")',
           }
           for old, new in replacements.items():
-              if text.count(old) != 1:
-                  raise SystemExit(f"Patch anchor count for {old!r}: {text.count(old)}")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Buildozer patch anchor count for {old!r}: {count}")
               text = text.replace(old, new)
           path.write_text(text)
 
@@ -206,7 +157,7 @@ jobs:
           recipe.write_text(rtext.replace(old, new))
           PY
 
-      - name: Build Android 16 ARM64 app
+      - name: Build proven baseline APK
         shell: bash
         working-directory: android-app
         env:
@@ -214,6 +165,7 @@ jobs:
           CCACHE_DIR: "$HOME/.cache/ccache"
         run: |
           set -uo pipefail
+          touch main.py
           pyside6-android-deploy \
             --name="AndroidChat" \
             --wheel-pyside="$GITHUB_WORKSPACE/android-wheels/pyside6-${PYSIDE_VERSION}-${PYSIDE_VERSION}-cp311-cp311-android_aarch64.whl" \
@@ -228,7 +180,7 @@ jobs:
           if [ "$deploy_rc" -ne 0 ]; then exit "$deploy_rc"; fi
           test -n "$(find "$GITHUB_WORKSPACE/android-app" -type f -name '*.apk' -print -quit 2>/dev/null)"
 
-      - name: Validate Android app APK
+      - name: Validate proven baseline APK
         if: success()
         shell: bash
         run: |
@@ -243,7 +195,7 @@ jobs:
           grep -q "targetSdkVersion:'36'" dist-app/apk-badging.txt
           grep -q "sdkVersion:'36'" dist-app/apk-badging.txt
           grep -q "native-code: 'arm64-v8a'" dist-app/apk-badging.txt
-          grep -q "android.permission.INTERNET" dist-app/apk-badging.txt
+          if grep -q 'READ_EXTERNAL_STORAGE\|WRITE_EXTERNAL_STORAGE' dist-app/apk-badging.txt; then exit 1; fi
           unzip -q dist-app/AndroidChat.apk -d unpacked-app
           test -f unpacked-app/lib/arm64-v8a/libpython3.11.so
           test -f unpacked-app/lib/arm64-v8a/libQt6Core_arm64-v8a.so
@@ -259,7 +211,6 @@ jobs:
             if [ -n "$min_align" ] && [ "$((min_align))" -lt 16384 ]; then
               rel="${so#unpacked-app/}"
               if [ "$rel" != "lib/arm64-v8a/libshiboken6.abi3.so" ]; then
-                printf '%s %s\n' "$rel" "$min_align"
                 bad=$((bad + 1))
               fi
             fi
